@@ -8,7 +8,6 @@ def download_csv(url: str) -> pd.DataFrame:
     return pd.read_csv(StringIO(r.text))
 
 def decimal_from_fractional(frac: str) -> float:
-    # For safety if any site returns fractional like "11/10"
     if isinstance(frac, str) and "/" in frac:
         a,b = frac.split("/")
         return 1.0 + float(a)/float(b)
