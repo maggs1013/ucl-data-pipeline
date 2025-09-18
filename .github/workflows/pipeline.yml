@@ -3,37 +3,63 @@ name: UCL Data Pipeline
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: "0 9 * * *"  # 09:00 UTC daily
+    # Every day at 09:00 UTC (adjust as you like)
+    - cron: "0 9 * * *"
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+    steps:
+      # 0) Checkout repo
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 1) Setup Python
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - run: |
+      # 2) Install requirements
+      - name: Install dependencies
+        run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Fetch Football-Data
+      # 3) Fetch historical results + odds (Football-Data.co.uk CSVs)
+      - name: Fetch Football-Data (historical)
         run: python scripts/fetch_football_data.py
 
-      - name: Fetch Odds API
+      # 4) Fetch upcoming fixtures + odds
+      #    This script should FIRST check data/manual_odds.csv and use it if present,
+      #    otherwise call The Odds API (with THE_ODDS_API_KEY). It never fails the job.
+      - name: Fetch Odds (API or manual override)
         env:
           THE_ODDS_API_KEY: ${{ secrets.THE_ODDS_API_KEY }}
+          # Optional: let the script auto-detect sport key if not provided
+          # ODDS_SPORT_KEY: soccer_uefa_champs_league
+          # Optional regions (default: eu,uk,us,au)
+          # ODDS_REGIONS: eu,uk,us,au
         run: python scripts/fetch_the_odds_api.py
 
-      - name: Enrich features
+      # 5) NEW: Fetch FBR xG (team/league standings with xG, xGA, xGD)
+      - name: Fetch FBR xG (team/league)
+        env:
+          FBR_API_KEY: ${{ secrets.FBR_API_KEY }}
+        run: python scripts/fetch_fbr_xg.py
+
+      # 6) Enrich features (injuries, lineups, refs, stadium travel, xG)
+      - name: Enrich features (merge injuries/lineups/refs/stadium/xG)
         run: python scripts/enrich_features.py
 
-      - name: Build final HIST & UPCOMING
+      # 7) Build final CSVs in the model schema
+      - name: Build HIST & UPCOMING for modeling
         run: python scripts/build_hist_and_upcoming.py
 
-      - uses: actions/upload-artifact@v4
+      # 8) Upload artifacts so you can download and send to the model step here in chat
+      - name: Upload data artifacts
+        uses: actions/upload-artifact@v4
         with:
           name: ucl-data
           path: |
