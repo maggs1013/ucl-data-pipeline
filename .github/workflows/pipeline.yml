@@ -3,7 +3,7 @@ name: UCL Data Pipeline
 on:
   workflow_dispatch: {}
   schedule:
-    # Every day at 09:00 UTC (adjust as you like)
+    # Run every day at 09:00 UTC (adjust as needed)
     - cron: "0 9 * * *"
 
 jobs:
@@ -27,45 +27,53 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 3) Fetch historical results + odds (Football-Data)
+      # 3) Fetch historical results/odds (Football-Data.co.uk)
       - name: Fetch Football-Data (historical)
         run: python scripts/fetch_football_data.py
 
-      # 4) Fetch upcoming odds - manual override OR The Odds API
-      #    (Your fetch_the_odds_api.py should first check data/manual_odds.csv)
+      # 4) Fetch upcoming odds (manual override OR Odds API)
+      #    fetch_the_odds_api.py should use data/manual_odds.csv if present,
+      #    else call The Odds API with THE_ODDS_API_KEY, and always write data/raw_theodds_fixtures.csv
       - name: Fetch Odds (API or manual override)
         env:
           THE_ODDS_API_KEY: ${{ secrets.THE_ODDS_API_KEY }}
-          # Optional: ODDS_SPORT_KEY, ODDS_REGIONS if you want to pin them:
+          # Optional: set sport/regions if you want to override auto-detect
           # ODDS_SPORT_KEY: soccer_uefa_champs_league
           # ODDS_REGIONS: eu,uk,us,au
         run: python scripts/fetch_the_odds_api.py
 
-      # 5) Fetch FBR team xG (current + last → hybrid weighted 60/40)
+      # 5) Fetch FBR team xG (current/last → hybrid)
+      #    Writes: data/xg_metrics_current.csv, data/xg_metrics_last.csv, data/xg_metrics_hybrid.csv
       - name: Fetch FBR team xG (current/last → hybrid)
         env:
           FBR_API_KEY: ${{ secrets.FBR_API_KEY }}
         run: python scripts/fetch_fbr_team_xg.py
 
-      # 6) Bootstrap team priors from xG (optional, but recommended)
-      #    This reads data/xg_metrics_hybrid.csv and auto-writes data/teams_master.csv
-      #    with sensible GK/set-piece/crowd priors so columns aren't flat.
+      # 6) Bootstrap team priors from xG (optional but recommended)
+      #    Writes/updates: data/teams_master.csv so GK/setpiece/crowd aren't flat
       - name: Bootstrap team priors from xG (optional)
         run: python scripts/bootstrap_team_priors.py
 
-      # 7) Enrich features (injuries, lineups, refs, stadium travel, xG, name normalization)
+      # 7) Ensure minimal data files exist (THIS IS THE NEW PREFLIGHT STEP)
+      #    Prevents pandas EmptyDataError if any CSV exists but is empty/no header
+      - name: Ensure minimal data files exist
+        run: python scripts/ensure_min_files.py
+
+      # 8) Enrich features (injuries/lineups/refs/stadium/xG + name normalizer)
+      #    Reads from /data, normalizes team names, merges xG hybrid, writes back enriched raws
       - name: Enrich features (merge injuries/lineups/refs/stadium/xG)
         run: python scripts/enrich_features.py
 
-      # 8) Build final CSVs in the model schema
+      # 9) Build final CSVs for modeling
+      #    Writes: data/HIST_matches.csv, data/UPCOMING_fixtures.csv
       - name: Build HIST & UPCOMING for modeling
         run: python scripts/build_hist_and_upcoming.py
 
-      # 9) Validate and summarize (prints row counts, columns, sample rows)
+      # 10) Validate/summarize (prints first rows & required columns to logs for the council)
       - name: Validate and summarize datasets
         run: python scripts/validate_data.py
 
-      # 10) Upload artifacts for your in-chat model
+      # 11) Upload artifacts you’ll download and give to the in-chat model
       - name: Upload data artifacts
         uses: actions/upload-artifact@v4
         with:
