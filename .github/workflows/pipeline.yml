@@ -3,6 +3,7 @@ name: UCL Data Pipeline
 on:
   workflow_dispatch: {}
   schedule:
+    # Every day at 09:00 UTC (adjust as you like)
     - cron: "0 9 * * *"
 
 jobs:
@@ -10,41 +11,61 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 0) Checkout repo
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 1) Setup Python
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
+      # 2) Install dependencies
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # 3) Fetch historical results + odds (Football-Data)
       - name: Fetch Football-Data (historical)
         run: python scripts/fetch_football_data.py
 
+      # 4) Fetch upcoming odds - manual override OR The Odds API
+      #    (Your fetch_the_odds_api.py should first check data/manual_odds.csv)
       - name: Fetch Odds (API or manual override)
         env:
           THE_ODDS_API_KEY: ${{ secrets.THE_ODDS_API_KEY }}
+          # Optional: ODDS_SPORT_KEY, ODDS_REGIONS if you want to pin them:
+          # ODDS_SPORT_KEY: soccer_uefa_champs_league
+          # ODDS_REGIONS: eu,uk,us,au
         run: python scripts/fetch_the_odds_api.py
 
+      # 5) Fetch FBR team xG (current + last → hybrid weighted 60/40)
       - name: Fetch FBR team xG (current/last → hybrid)
         env:
           FBR_API_KEY: ${{ secrets.FBR_API_KEY }}
         run: python scripts/fetch_fbr_team_xg.py
 
+      # 6) Bootstrap team priors from xG (optional, but recommended)
+      #    This reads data/xg_metrics_hybrid.csv and auto-writes data/teams_master.csv
+      #    with sensible GK/set-piece/crowd priors so columns aren't flat.
+      - name: Bootstrap team priors from xG (optional)
+        run: python scripts/bootstrap_team_priors.py
+
+      # 7) Enrich features (injuries, lineups, refs, stadium travel, xG, name normalization)
       - name: Enrich features (merge injuries/lineups/refs/stadium/xG)
         run: python scripts/enrich_features.py
 
+      # 8) Build final CSVs in the model schema
       - name: Build HIST & UPCOMING for modeling
         run: python scripts/build_hist_and_upcoming.py
 
+      # 9) Validate and summarize (prints row counts, columns, sample rows)
       - name: Validate and summarize datasets
         run: python scripts/validate_data.py
 
+      # 10) Upload artifacts for your in-chat model
       - name: Upload data artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -55,3 +76,4 @@ jobs:
             data/xg_metrics_current.csv
             data/xg_metrics_last.csv
             data/xg_metrics_hybrid.csv
+            data/teams_master.csv
